@@ -1,18 +1,29 @@
 import os
 import asyncio
+import threading
 import nest_asyncio
-from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask
+
+# --- Python 3.14 + Pyrogram ইভেন্ট লুপ এরর ফিক্স ---
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 nest_asyncio.apply()
 
+# এখন Pyrogram নিরাপদে ইমপোর্ট হবে
+from pyrogram import Client, filters
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+
+# --- Flask Setup (Render-এ বট সচল রাখার জন্য) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
     return "ZFLiXNet Bot is active and running!"
 
+# --- Bot Configurations ---
 API_ID = 34505015
 API_HASH = "4842676c7e27556093bf3eef1d46f072"
 BOT_TOKEN = "7313000494:AAHcGeE4tMuvJ4IoBSzBRjtC-f5-o2zwygE"
@@ -26,6 +37,7 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
+# --- Handlers ---
 @app.on_message(filters.command("start"))
 async def start_handler(client, message: Message):
     await message.reply_text(
@@ -55,15 +67,19 @@ async def file_handler(client, message: Message):
     except Exception as e:
         print(f"ডিলিট করতে সমস্যা হয়েছে: {e}")
 
+# --- Flask Run Function ---
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     web_app.run(host="0.0.0.0", port=port)
 
+# --- Main Execution ---
 if __name__ == "__main__":
     print("ZFLiXNet Bot চালু হচ্ছে...")
-    import threading
+    
+    # Flask ওয়েব সার্ভার আলাদা থ্রেডে চালু করা
     t = threading.Thread(target=run_flask)
     t.daemon = True
     t.start()
     
+    # টেলিগ্রাম বট চালু করা
     app.run()
