@@ -31,7 +31,7 @@ API_HASH = "4842676c7e27556093bf3eef1d46f072"
 BOT_TOKEN = "7313000494:AAHcGeE4tMuvJ4IoBSzBRjtC-f5-o2zwygE"
 ADMIN_ID = 7091081785 
 
-# ✅ আপনার MongoDB কানেকশন লিংক (ইউজারনেম ও পাসওয়ার্ড বসানো হয়েছে)
+# ✅ MongoDB কানেকশন লিংক (ইউজারনেম ও পাসওয়ার্ড বসানো)
 MONGO_URI = "mongodb+srv://53820132:53820132@cluster0.m9wwy0y.mongodb.net/?appName=Cluster0"
 
 app = Client("ZFLiXNetBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -41,18 +41,24 @@ db_client = pymongo.MongoClient(MONGO_URI)
 db = db_client["ZFLiXNet"]
 links_col = db["links"]
 
-# --- Helper Function to Extract Link Info ---
+# --- Helper Function to Extract Link Info (Fixed Version) ---
 def parse_telegram_link(link):
     try:
-        parts = urlparse(link).path.strip("/").split("/")
-        if len(parts) == 4 and parts[0] == 'c':
-            # Private channel link (e.g., https://t.me/c/123456789/123)
+        path = urlparse(link).path.strip("/")
+        parts = path.split("/")
+        
+        # প্রাইভেট চ্যানেলের লিংক (যেমন: https://t.me/c/123456789/123)
+        if len(parts) == 3 and parts[0] == 'c':
             chat_id = int("-100" + parts[1])
             msg_id = int(parts[2])
             return chat_id, msg_id
-        elif len(parts) == 3:
-            # Public channel link (e.g., https://t.me/channelname/123)
-            return parts[1], int(parts[2])
+            
+        # পাবলিক চ্যানেলের লিংক (যেমন: https://t.me/ZFLixNetEntertainment/1075)
+        elif len(parts) == 2:
+            chat_id = parts[0]
+            msg_id = int(parts[1])
+            return chat_id, msg_id
+            
     except Exception as e:
         print(f"Error parsing link: {e}")
     return None, None
@@ -61,7 +67,7 @@ def parse_telegram_link(link):
 
 @app.on_message(filters.command("start"))
 async def start_handler(client, message: Message):
-    # Check if the user came via a shareable link
+    # ইউজার শেয়ারেবল লিংকে ক্লিক করলে
     if len(message.command) > 1:
         token = message.command[1]
         data = links_col.find_one({"_id": token})
@@ -69,7 +75,7 @@ async def start_handler(client, message: Message):
         if data:
             await message.reply_text("⏳ Please wait, fetching your file...")
             try:
-                # Copy the file from storage channel and send to user
+                # চ্যানেল থেকে ফাইল কপি করে ইউজারকে পাঠানো
                 await client.copy_message(
                     chat_id=message.chat.id,
                     from_chat_id=data["chat_id"],
@@ -99,17 +105,17 @@ async def gen_link_handler(client, message: Message):
         await message.reply_text("❌ Invalid link format! Please send a valid Telegram message link.")
         return
     
-    # Generate a unique token
+    # ইউনিক টোকেন তৈরি
     token = secrets.token_urlsafe(8)
     
-    # Save to MongoDB
+    # MongoDB তে সেভ করা
     links_col.insert_one({
         "_id": token,
         "chat_id": chat_id,
         "msg_id": msg_id
     })
     
-    # Generate shareable link
+    # শেয়ারেবল লিংক তৈরি
     shareable_link = f"https://t.me/{app.me.username}?start={token}"
     
     await message.reply_text(
