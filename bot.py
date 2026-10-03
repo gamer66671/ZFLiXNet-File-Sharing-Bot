@@ -4,7 +4,7 @@ import threading
 import nest_asyncio
 from flask import Flask
 
-# --- Python 3.14 + Pyrogram ইভেন্ট লুপ এরর ফিক্স ---
+# --- Python 3.14 + Pyrogram Event Loop Fix ---
 try:
     asyncio.get_event_loop()
 except RuntimeError:
@@ -12,11 +12,10 @@ except RuntimeError:
 
 nest_asyncio.apply()
 
-# এখন Pyrogram নিরাপদে ইমপোর্ট হবে
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
-# --- Flask Setup (Render-এ বট সচল রাখার জন্য) ---
+# --- Flask Setup (To keep the bot alive on Render) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -28,7 +27,13 @@ API_ID = 34505015
 API_HASH = "4842676c7e27556093bf3eef1d46f072"
 BOT_TOKEN = "7313000494:AAHcGeE4tMuvJ4IoBSzBRjtC-f5-o2zwygE"
 
-AUTO_DELETE_TIME = 300
+# ✅ আপনার অ্যাডমিন আইডি এখানে বসানো হয়েছে
+ADMIN_ID = 7091081785 
+
+# --- Default Settings (Can be changed from the bot) ---
+AUTO_DELETE_TIME = 300  # Default: 5 minutes (300 seconds)
+START_TEXT = "Welcome to ZFLiXNet File Sharing Bot!\n\nSend me any file, and I will generate a direct download link for you. The file will be auto-deleted after {time} seconds."
+FILE_TEXT = "Your download link is ready! Click the button below to download the file.\n\n⏳ This file and link will be automatically deleted in {time} seconds."
 
 app = Client(
     "ZFLiXNetBot",
@@ -37,12 +42,59 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-# --- Handlers ---
+# --- Admin Commands to Control Bot Settings ---
+
+@app.on_message(filters.command("myid") & filters.private)
+async def get_id(client, message: Message):
+    await message.reply_text(f"Your Telegram ID is: `{message.from_user.id}`")
+
+@app.on_message(filters.command("set_time") & filters.user(ADMIN_ID))
+async def set_time(client, message: Message):
+    global AUTO_DELETE_TIME
+    try:
+        time_in_seconds = int(message.text.split()[1])
+        AUTO_DELETE_TIME = time_in_seconds
+        await message.reply_text(f"✅ Auto-delete time updated to **{AUTO_DELETE_TIME}** seconds.")
+    except (IndexError, ValueError):
+        await message.reply_text("❌ Usage: `/set_time <seconds>`\nExample: `/set_time 120` (for 2 minutes)")
+
+@app.on_message(filters.command("set_start") & filters.user(ADMIN_ID))
+async def set_start_text(client, message: Message):
+    global START_TEXT
+    new_text = message.text.replace("/set_start ", "")
+    if new_text:
+        START_TEXT = new_text
+        await message.reply_text("✅ Start message updated successfully.")
+    else:
+        await message.reply_text("❌ Usage: `/set_start Your new welcome message here.`\n(Use {time} to show the delete time)")
+
+@app.on_message(filters.command("set_file") & filters.user(ADMIN_ID))
+async def set_file_text(client, message: Message):
+    global FILE_TEXT
+    new_text = message.text.replace("/set_file ", "")
+    if new_text:
+        FILE_TEXT = new_text
+        await message.reply_text("✅ File link message updated successfully.")
+    else:
+        await message.reply_text("❌ Usage: `/set_file Your new link message here.`\n(Use {time} to show the delete time)")
+
+@app.on_message(filters.command("settings") & filters.user(ADMIN_ID))
+async def show_settings(client, message: Message):
+    settings_text = (
+        f"⚙️ **Current Bot Settings:**\n\n"
+        f"**Auto-Delete Time:** {AUTO_DELETE_TIME} seconds\n\n"
+        f"**Start Text:**\n`{START_TEXT}`\n\n"
+        f"**File Text:**\n`{FILE_TEXT}`"
+    )
+    await message.reply_text(settings_text)
+
+# --- Main Handlers ---
+
 @app.on_message(filters.command("start"))
 async def start_handler(client, message: Message):
-    await message.reply_text(
-        "স্বাগতম ZFLiXNet ফাইল শেয়ারিং বটে! যেকোনো ফাইল দিলে আমি ডাউনলোডের সরাসরি লিংক বানিয়ে দিব, আর ৫ মিনিট পর ফাইলটি অটো-ডিলিট হয়ে যাবে।"
-    )
+    # Format the text with the current auto-delete time
+    formatted_text = START_TEXT.format(time=AUTO_DELETE_TIME)
+    await message.reply_text(formatted_text)
 
 @app.on_message(filters.document | filters.video | filters.audio)
 async def file_handler(client, message: Message):
@@ -55,17 +107,23 @@ async def file_handler(client, message: Message):
         [[InlineKeyboardButton("📥 Download File Now", url=download_link)]]
     )
     
+    formatted_text = FILE_TEXT.format(time=AUTO_DELETE_TIME)
+    
     sent_msg = await message.reply_text(
-        "তোর ডাউনলোড লিংক রেডি! নিচের বাটনে ক্লিক করে ফাইলটি ডাউনলোড কর। ঠিক ৫ মিনিট পর ফাইল এবং লিংক অটোমেটিক ডিলিট হয়ে যাবে।",
+        formatted_text,
         reply_markup=keyboard
     )
     
+    # Wait for the custom set time
     await asyncio.sleep(AUTO_DELETE_TIME)
+    
     try:
+        # Delete the original user's file
         await message.delete()
-        await sent_msg.edit_text("নিরাপত্তার স্বার্থে ফাইলটি মুছে ফেলা হয়েছে।")
+        # Edit the bot's message to show it's deleted
+        await sent_msg.edit_text("⚠️ The file has been deleted for security reasons.")
     except Exception as e:
-        print(f"ডিলিট করতে সমস্যা হয়েছে: {e}")
+        print(f"Deletion error: {e}")
 
 # --- Flask Run Function ---
 def run_flask():
@@ -74,12 +132,10 @@ def run_flask():
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    print("ZFLiXNet Bot চালু হচ্ছে...")
+    print("ZFLiXNet Bot is starting...")
     
-    # Flask ওয়েব সার্ভার আলাদা থ্রেডে চালু করা
     t = threading.Thread(target=run_flask)
     t.daemon = True
     t.start()
     
-    # টেলিগ্রাম বট চালু করা
     app.run()
