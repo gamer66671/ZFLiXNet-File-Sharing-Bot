@@ -1,7 +1,11 @@
 import os
 import asyncio
+import nest_asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+
+# ইভেন্ট লুপের প্যারা স্থায়ীভাবে দূর করতে
+nest_asyncio.apply()
 
 API_ID = 34505015
 API_HASH = "4842676c7e27556093bf3eef1d46f072"
@@ -47,10 +51,4 @@ async def file_handler(client, message: Message):
 
 if __name__ == "__main__":
     print("ZFLiXNet Bot চালু হচ্ছে...")
-    try:
-        loop = asyncio.get_event_loop_policy().get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
     app.run()
