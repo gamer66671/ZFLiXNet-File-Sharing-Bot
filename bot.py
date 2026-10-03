@@ -2,7 +2,10 @@ import os
 import asyncio
 import threading
 import nest_asyncio
+import pymongo
+import secrets
 from flask import Flask
+from urllib.parse import urlparse
 
 # --- Python 3.14 + Pyrogram Event Loop Fix ---
 try:
@@ -13,126 +16,108 @@ except RuntimeError:
 nest_asyncio.apply()
 
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
+from pyrogram.types import Message
 
 # --- Flask Setup (To keep the bot alive on Render) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "ZFLiXNet Bot is active and running!"
+    return "ZFLiXNet File Store Bot is active!"
 
 # --- Bot Configurations ---
 API_ID = 34505015
 API_HASH = "4842676c7e27556093bf3eef1d46f072"
 BOT_TOKEN = "7313000494:AAHcGeE4tMuvJ4IoBSzBRjtC-f5-o2zwygE"
-
-# ✅ আপনার অ্যাডমিন আইডি এখানে বসানো হয়েছে
 ADMIN_ID = 7091081785 
 
-# --- Default Settings (Can be changed from the bot) ---
-AUTO_DELETE_TIME = 300  # Default: 5 minutes (300 seconds)
-START_TEXT = "Welcome to ZFLiXNet File Sharing Bot!\n\nSend me any file, and I will generate a direct download link for you. The file will be auto-deleted after {time} seconds."
-FILE_TEXT = "Your download link is ready! Click the button below to download the file.\n\n⏳ This file and link will be automatically deleted in {time} seconds."
+# ✅ আপনার MongoDB কানেকশন লিংক (ইউজারনেম ও পাসওয়ার্ড বসানো হয়েছে)
+MONGO_URI = "mongodb+srv://53820132:53820132@cluster0.m9wwy0y.mongodb.net/?appName=Cluster0"
 
-app = Client(
-    "ZFLiXNetBot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+app = Client("ZFLiXNetBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- Admin Commands to Control Bot Settings ---
+# --- Database Setup ---
+db_client = pymongo.MongoClient(MONGO_URI)
+db = db_client["ZFLiXNet"]
+links_col = db["links"]
 
-@app.on_message(filters.command("set_menu") & filters.user(ADMIN_ID))
-async def set_bot_menu(client, message: Message):
-    # এই কমান্ডটি একবার চালালেই বটের মেনুতে start এবং settings বাটন যুক্ত হয়ে যাবে
-    await app.set_bot_commands([
-        BotCommand("start", "Start the bot"),
-        BotCommand("settings", "Admin Settings Panel")
-    ])
-    await message.reply_text("✅ বটের মেনু সফলভাবে আপডেট করা হয়েছে! টেলিগ্রামের মেনু (Menu) বাটনে ক্লিক করে দেখুন।")
-
-@app.on_message(filters.command("myid") & filters.private)
-async def get_id(client, message: Message):
-    await message.reply_text(f"Your Telegram ID is: `{message.from_user.id}`")
-
-@app.on_message(filters.command("set_time") & filters.user(ADMIN_ID))
-async def set_time(client, message: Message):
-    global AUTO_DELETE_TIME
+# --- Helper Function to Extract Link Info ---
+def parse_telegram_link(link):
     try:
-        time_in_seconds = int(message.text.split()[1])
-        AUTO_DELETE_TIME = time_in_seconds
-        await message.reply_text(f"✅ Auto-delete time updated to **{AUTO_DELETE_TIME}** seconds.")
-    except (IndexError, ValueError):
-        await message.reply_text("❌ Usage: `/set_time <seconds>`\nExample: `/set_time 120` (for 2 minutes)")
-
-@app.on_message(filters.command("set_start") & filters.user(ADMIN_ID))
-async def set_start_text(client, message: Message):
-    global START_TEXT
-    new_text = message.text.replace("/set_start ", "")
-    if new_text:
-        START_TEXT = new_text
-        await message.reply_text("✅ Start message updated successfully.")
-    else:
-        await message.reply_text("❌ Usage: `/set_start Your new welcome message here.`\n(Use {time} to show the delete time)")
-
-@app.on_message(filters.command("set_file") & filters.user(ADMIN_ID))
-async def set_file_text(client, message: Message):
-    global FILE_TEXT
-    new_text = message.text.replace("/set_file ", "")
-    if new_text:
-        FILE_TEXT = new_text
-        await message.reply_text("✅ File link message updated successfully.")
-    else:
-        await message.reply_text("❌ Usage: `/set_file Your new link message here.`\n(Use {time} to show the delete time)")
-
-@app.on_message(filters.command("settings") & filters.user(ADMIN_ID))
-async def show_settings(client, message: Message):
-    settings_text = (
-        f"⚙️ **Current Bot Settings:**\n\n"
-        f"**Auto-Delete Time:** {AUTO_DELETE_TIME} seconds\n\n"
-        f"**Start Text:**\n`{START_TEXT}`\n\n"
-        f"**File Text:**\n`{FILE_TEXT}`"
-    )
-    await message.reply_text(settings_text)
+        parts = urlparse(link).path.strip("/").split("/")
+        if len(parts) == 4 and parts[0] == 'c':
+            # Private channel link (e.g., https://t.me/c/123456789/123)
+            chat_id = int("-100" + parts[1])
+            msg_id = int(parts[2])
+            return chat_id, msg_id
+        elif len(parts) == 3:
+            # Public channel link (e.g., https://t.me/channelname/123)
+            return parts[1], int(parts[2])
+    except Exception as e:
+        print(f"Error parsing link: {e}")
+    return None, None
 
 # --- Main Handlers ---
 
 @app.on_message(filters.command("start"))
 async def start_handler(client, message: Message):
-    # Format the text with the current auto-delete time
-    formatted_text = START_TEXT.format(time=AUTO_DELETE_TIME)
-    await message.reply_text(formatted_text)
+    # Check if the user came via a shareable link
+    if len(message.command) > 1:
+        token = message.command[1]
+        data = links_col.find_one({"_id": token})
+        
+        if data:
+            await message.reply_text("⏳ Please wait, fetching your file...")
+            try:
+                # Copy the file from storage channel and send to user
+                await client.copy_message(
+                    chat_id=message.chat.id,
+                    from_chat_id=data["chat_id"],
+                    message_id=data["msg_id"]
+                )
+            except Exception as e:
+                await message.reply_text(f"❌ Error: Could not send the file. Make sure I am an Admin in your channel.\n\n`{e}`")
+        else:
+            await message.reply_text("❌ Invalid or expired link!")
+    else:
+        await message.reply_text(
+            "Welcome! I am a File Store Bot. 🗂\n\n"
+            "Admin can use `/genlink <Telegram Message Link>` to generate a shareable link."
+        )
 
-@app.on_message(filters.document | filters.video | filters.audio)
-async def file_handler(client, message: Message):
-    file_id = message.id
-    chat_id = message.chat.id
+@app.on_message(filters.command("genlink") & filters.user(ADMIN_ID))
+async def gen_link_handler(client, message: Message):
+    text = message.text or message.caption
+    if len(text.split()) < 2:
+        await message.reply_text("❌ Please provide a Telegram message link.\n\nExample: `/genlink https://t.me/c/123456789/123`")
+        return
+
+    link = text.split(" ")[1]
+    chat_id, msg_id = parse_telegram_link(link)
     
-    download_link = f"https://t.me/{app.me.username}?start=file_{chat_id}_{file_id}"
+    if not chat_id or not msg_id:
+        await message.reply_text("❌ Invalid link format! Please send a valid Telegram message link.")
+        return
     
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("📥 Download File Now", url=download_link)]]
+    # Generate a unique token
+    token = secrets.token_urlsafe(8)
+    
+    # Save to MongoDB
+    links_col.insert_one({
+        "_id": token,
+        "chat_id": chat_id,
+        "msg_id": msg_id
+    })
+    
+    # Generate shareable link
+    shareable_link = f"https://t.me/{app.me.username}?start={token}"
+    
+    await message.reply_text(
+        f"✅ **Link Generated Successfully!**\n\n"
+        f"🔗 **Share this link:**\n`{shareable_link}`\n\n"
+        f"Anyone who clicks this link will get the file.",
+        disable_web_page_preview=True
     )
-    
-    formatted_text = FILE_TEXT.format(time=AUTO_DELETE_TIME)
-    
-    sent_msg = await message.reply_text(
-        formatted_text,
-        reply_markup=keyboard
-    )
-    
-    # Wait for the custom set time
-    await asyncio.sleep(AUTO_DELETE_TIME)
-    
-    try:
-        # Delete the original user's file
-        await message.delete()
-        # Edit the bot's message to show it's deleted
-        await sent_msg.edit_text("⚠️ The file has been deleted for security reasons.")
-    except Exception as e:
-        print(f"Deletion error: {e}")
 
 # --- Flask Run Function ---
 def run_flask():
@@ -141,10 +126,8 @@ def run_flask():
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    print("ZFLiXNet Bot is starting...")
-    
+    print("ZFLiXNet File Store Bot is starting...")
     t = threading.Thread(target=run_flask)
     t.daemon = True
     t.start()
-    
     app.run()
