@@ -13,7 +13,7 @@ except RuntimeError:
 nest_asyncio.apply()
 
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 
 # --- Flask Setup (To keep the bot alive on Render) ---
 web_app = Flask(__name__)
@@ -43,6 +43,15 @@ app = Client(
 )
 
 # --- Admin Commands to Control Bot Settings ---
+
+@app.on_message(filters.command("set_menu") & filters.user(ADMIN_ID))
+async def set_bot_menu(client, message: Message):
+    # এই কমান্ডটি একবার চালালেই বটের মেনুতে start এবং settings বাটন যুক্ত হয়ে যাবে
+    await app.set_bot_commands([
+        BotCommand("start", "Start the bot"),
+        BotCommand("settings", "Admin Settings Panel")
+    ])
+    await message.reply_text("✅ বটের মেনু সফলভাবে আপডেট করা হয়েছে! টেলিগ্রামের মেনু (Menu) বাটনে ক্লিক করে দেখুন।")
 
 @app.on_message(filters.command("myid") & filters.private)
 async def get_id(client, message: Message):
